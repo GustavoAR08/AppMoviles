@@ -2,7 +2,7 @@ package com.example.library;
 
 import android.graphics.Color;
 import android.os.Bundle;
-import android.text.Editable;
+import android.util.Log;
 import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.EditText;
@@ -10,7 +10,6 @@ import android.widget.ImageButton;
 import android.widget.Spinner;
 import android.widget.Switch;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.activity.EdgeToEdge;
 import androidx.annotation.NonNull;
@@ -32,17 +31,21 @@ import java.util.HashMap;
 import java.util.Map;
 
 public class MainActivity extends AppCompatActivity {
+    // Instanciar los objetos que tienen id en el archivo xml
     EditText idBook, name, author;
     Spinner editorial;
     Switch savailable;
     ImageButton bSave, bSearch, bEdit, bDelete, bList;
     TextView message;
+    // Generar el array con las opciones del spinner (editorial)
     String[] arrayEditorial = {"Oveja Negra", "Prentice Hall"};
+    // Instanciar objeto de FirebaseFirestore para acceder a la base de datos Firestore
     FirebaseFirestore db = FirebaseFirestore.getInstance();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        EdgeToEdge.enable(this);
         setContentView(R.layout.activity_main);
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main), (v, insets) -> {
             Insets systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
@@ -50,6 +53,7 @@ public class MainActivity extends AppCompatActivity {
             return insets;
         });
 
+        // Referenciar los objetos con cada id respectivo del archivo xml
         message = findViewById(R.id.tvMessage);
         idBook = findViewById(R.id.etIdBook);
         name = findViewById(R.id.etName);
@@ -62,8 +66,48 @@ public class MainActivity extends AppCompatActivity {
         bDelete = findViewById(R.id.ibDelete);
         bList = findViewById(R.id.ibList);
 
-        ArrayAdapter<String> arrayadp = new ArrayAdapter<>(this, android.R.layout.simple_list_item_checked, arrayEditorial);
+        // Poblar el spinner con Array y luego con el arrayAdapter
+        ArrayAdapter<String> arrayadp = new ArrayAdapter<String>(this, android.R.layout.simple_list_item_checked, arrayEditorial);
         editorial.setAdapter(arrayadp);
+
+        // Eventos de cada botón
+        bSearch.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                if (!idBook.getText().toString().isEmpty()) {
+                    // Restablecer el mensaje antes de realizar la búsqueda
+                    message.setText(""); // Limpiar el mensaje previo
+
+                    // Buscar el libro a través del idbook
+                    db.collection("book")
+                            .whereEqualTo("idbook", idBook.getText().toString())
+                            .get()
+                            .addOnCompleteListener(new OnCompleteListener<QuerySnapshot>() {
+                                @Override
+                                public void onComplete(@NonNull Task<QuerySnapshot> task) {
+                                    if (task.isSuccessful()) {
+                                        if (!task.getResult().isEmpty()) {
+                                            for (QueryDocumentSnapshot document : task.getResult()) {
+                                                name.setText(document.getString("name"));
+                                                author.setText(document.getString("author"));
+                                                editorial.setSelection(document.getString("editorial").equals("Oveja Negra") ? 0 : 1);
+                                                savailable.setChecked(document.getDouble("available") == 1 ? true : false);
+                                            }
+                                        } else {
+                                            message.setTextColor(Color.parseColor("#FF4545"));
+                                            message.setText("El id del libro NO Existe. Inténtelo con otro");
+                                        }
+                                    } else {
+                                        Log.d("Firestore", "Error al obtener el libro: " + task.getException());
+                                    }
+                                }
+                            });
+                } else {
+                    message.setTextColor(Color.parseColor("#FF4545"));
+                    message.setText("Debe ingresar el id del libro a buscar...");
+                }
+            }
+        });
 
         bSave.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -74,42 +118,56 @@ public class MainActivity extends AppCompatActivity {
                 String mEditorial = editorial.getSelectedItem().toString();
                 int mAvailable = savailable.isChecked() ? 1 : 0;
 
-                if (checkDataBook(mIdBook, mName, mAuthor)) {
+                if (checkDataBook(mIdBook, mName, mAuthor)) { // Estos datos están diligenciados
+
+                    // Restablecer el mensaje antes de realizar la búsqueda
+                    message.setText(""); // Limpiar el mensaje previo
+
+                    // Primero, verificar si el idbook ya existe
                     db.collection("book")
                             .whereEqualTo("idbook", mIdBook)
                             .get()
-                            .addOnCompleteListener(task -> {
-                                if (task.isSuccessful()) {
-                                    if (!task.getResult().isEmpty()) {
-                                        // El ID ya existe en otro documento
-                                        for (QueryDocumentSnapshot document : task.getResult()) {
-                                            String existingName = document.getString("name");
+                            .addOnCompleteListener(new OnCompleteListener<QuerySnapshot>() {
+                                @Override
+                                public void onComplete(@NonNull Task<QuerySnapshot> task) {
+                                    if (task.isSuccessful()) {
+                                        if (task.getResult() != null && !task.getResult().isEmpty()) {
+                                            // Si existe, mostrar mensaje de error
+                                            Log.d("Firestore", "El idbook ya está asignado a otro libro.");
                                             message.setTextColor(Color.parseColor("#FF4545"));
-                                            message.setText("El ID del libro ya existe, asignado al libro: " + existingName);
+                                            message.setText("El id del libro ya está asignado a otro libro...");
+                                        } else {
+                                            // Si no existe, continuar con el guardado del libro
+                                            Map<String, Object> mapBook = new HashMap<>();
+                                            mapBook.put("idbook", mIdBook);
+                                            mapBook.put("name", mName);
+                                            mapBook.put("author", mAuthor);
+                                            mapBook.put("editorial", mEditorial);
+                                            mapBook.put("available", mAvailable);
+
+                                            // Guardar el documento en Firestore
+                                            db.collection("book")
+                                                    .add(mapBook)
+                                                    .addOnSuccessListener(new OnSuccessListener<DocumentReference>() {
+                                                        @Override
+                                                        public void onSuccess(DocumentReference documentReference) {
+                                                            Log.d("Firestore", "Libro agregado con éxito: " + documentReference.getId());
+                                                            message.setTextColor(Color.parseColor("#31511E"));
+                                                            message.setText("Libro agregado exitosamente...");
+                                                        }
+                                                    })
+                                                    .addOnFailureListener(new OnFailureListener() {
+                                                        @Override
+                                                        public void onFailure(@NonNull Exception e) {
+                                                            Log.d("Firestore", "Error al agregar el libro: " + e.getMessage());
+                                                            message.setTextColor(Color.parseColor("#FF4545"));
+                                                            message.setText("No se agregó el libro...");
+                                                        }
+                                                    });
                                         }
                                     } else {
-                                        // No existe, entonces se guarda
-                                        Map<String, Object> mapBook = new HashMap<>();
-                                        mapBook.put("idbook", mIdBook);
-                                        mapBook.put("name", mName);
-                                        mapBook.put("author", mAuthor);
-                                        mapBook.put("editorial", mEditorial);
-                                        mapBook.put("available", mAvailable);
-
-                                        db.collection("book")
-                                                .add(mapBook)
-                                                .addOnSuccessListener(documentReference -> {
-                                                    message.setTextColor(Color.parseColor("#31511E"));
-                                                    message.setText("Libro agregado exitosamente...");
-                                                })
-                                                .addOnFailureListener(e -> {
-                                                    message.setTextColor(Color.parseColor("#FF4545"));
-                                                    message.setText("No se agregó el libro...");
-                                                });
+                                        Log.d("Firestore", "Error al comprobar si existe el idbook: " + task.getException());
                                     }
-                                } else {
-                                    message.setTextColor(Color.parseColor("#FF4545"));
-                                    message.setText("Error al verificar el ID del libro.");
                                 }
                             });
                 } else {
@@ -124,3 +182,7 @@ public class MainActivity extends AppCompatActivity {
         return !mIdBook.isEmpty() && !mName.isEmpty() && !mAuthor.isEmpty();
     }
 }
+
+
+
+
